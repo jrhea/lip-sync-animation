@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lip Sync Animation</title>
+</head>
+<body>
+  <h2>Select an audio file</h2>
+  <input type="file" id="audio-file" accept="audio/*">
+  <br><br>
+  <p id="live-max">Max RMS: 0.0000, Max Peak: 0.0000</p>
+  <canvas id="canvas" width="500" height="200" style="border:0px solid black;"></canvas>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    let timeline = []; // { time, rms, peak }
+    let startTime = 0;
+    let audioCtx;
+    let source;
+    let liveMaxRMS = 0;
+    let liveMaxPeak = 0;
+    const maxRMS = 0.3;   // RMS will never be drawn higher than this
+    const maxPeak = 0.4;  // Peak can still go higher in real audio, but will max out visually
+    let smoothRMS = 0;
+    let smoothPeak = 0;
+    const alpha = 0.2;
+
+    function drawMouths(rmsOpen, peakOpen) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // RMS Mouth
+        ctx.beginPath();
+        ctx.ellipse(100, 100, 40, rmsOpen * 60, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.font = "16px sans-serif";
+        ctx.fillText("RMS", 75, 180);
+
+        // Combination
+        ctx.beginPath();
+        ctx.ellipse(250, 100, 40, (.5 * rmsOpen + .5 * peakOpen) * 60, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText("Combo", 225, 180);
+
+        // Peak Mouth
+        ctx.beginPath();
+        ctx.ellipse(400, 100, 40, peakOpen * 60, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText("Peak", 375, 180);
+
+        // Set text style
+        ctx.fillStyle = 'black';
+        ctx.font = "14px sans-serif";
+
+        // Show values
+        ctx.fillText(`RMS: ${rmsOpen.toFixed(4)}`, 10, 20);
+        ctx.fillText(`Peak: ${peakOpen.toFixed(4)}`, 10, 40);
+    }
+
+    function animateMouths() {
+        const currentTime = audioCtx.currentTime - startTime;
+        let next = timeline.find(t => t.time >= currentTime);
+        if (!next) return;
+
+        // Update max values
+        if (next.rms > liveMaxRMS) liveMaxRMS = next.rms;
+        if (next.peak > liveMaxPeak) liveMaxPeak = next.peak;
+
+        // Update on page
+        document.getElementById("live-max").textContent = 
+        `Max RMS: ${liveMaxRMS.toFixed(4)}, Max Peak: ${liveMaxPeak.toFixed(4)}`;
+
+        let rmsOpen = Math.max(Math.min(next.rms, maxRMS),.005);
+        let peakOpen = Math.max(Math.min(next.peak, maxPeak),.005);
+
+        smoothRMS = alpha * rmsOpen + (1 - alpha) * smoothRMS;
+        smoothPeak = alpha * peakOpen + (1 - alpha) * smoothPeak;
+        
+        drawMouths(smoothRMS, smoothPeak);
+        requestAnimationFrame(animateMouths);
+    }
+
+    document.getElementById("audio-file").addEventListener("change", async function (event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const arrayBuffer = await file.arrayBuffer();
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+        const channelData = audioBuffer.getChannelData(0); // mono
+        const sampleRate = audioBuffer.sampleRate;
+        const timeStep = 0.03; // 30 fps
+        const samplesPerStep = Math.floor(sampleRate * timeStep);
+
+        timeline = [];
+
+        for (let i = 0; i < channelData.length; i += samplesPerStep) {
+        const slice = channelData.slice(i, i + samplesPerStep);
+        const rms = Math.sqrt(slice.reduce((sum, val) => sum + val * val, 0) / slice.length);
+        const peak = slice.reduce((max, val) => Math.max(max, Math.abs(val)), 0);
+
+        timeline.push({
+            time: i / sampleRate,
+            rms,
+            peak
+        });
+        }
+
+        // Create and play audio
+        source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioCtx.destination);
+        startTime = audioCtx.currentTime;
+        source.start();
+
+        // Start animation
+        requestAnimationFrame(animateMouths);
+    });
+  </script>
+</body>
+</html>
